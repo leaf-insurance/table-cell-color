@@ -20,6 +20,7 @@ const CSS = {
   rowSelected: 'tc-row--selected',
   cell: 'tc-cell',
   cellSelected: 'tc-cell--selected',
+  cellActive: 'tc-cell--active',
   addRow: 'tc-add-row',
   addRowDisabled: 'tc-add-row--disabled',
   addColumn: 'tc-add-column',
@@ -65,11 +66,24 @@ export default class Table {
     this.wrapper = null;
     this.table = null;
 
+    // Available colors for cells
+    this.cellColors = [
+      { name: 'Default', value: 'transparent' },
+      { name: 'Red', value: '#ffdddd' },
+      { name: 'Green', value: '#ddffdd' },
+      { name: 'Blue', value: '#ddddff' },
+      { name: 'Yellow', value: '#ffffdd' },
+      { name: 'Orange', value: '#ffeecc' },
+      { name: 'Purple', value: '#eeddff' },
+      { name: 'Gray', value: '#eeeeee' }
+    ];
+
     /**
      * Toolbox for managing of columns
      */
     this.toolboxColumn = this.createColumnToolbox();
     this.toolboxRow = this.createRowToolbox();
+    this.toolboxCell = this.createCellToolbox();
 
     /**
      * Create table and wrapper elements
@@ -87,6 +101,8 @@ export default class Table {
 
     // Index of last selected column via toolbox
     this.selectedColumn = 0;
+
+    this.selectedCell = {row: 0, column: 0};
 
     // Additional settings for the table
     this.tunes = {
@@ -171,6 +187,9 @@ export default class Table {
 
     // Determine the position of the cell in focus
     this.table.addEventListener('focusin', event => this.focusInTableListener(event));
+
+    // Handle cell click for selection
+    this.table.addEventListener('click', event => this.cellClickListener(event));
   }
 
   /**
@@ -221,6 +240,7 @@ export default class Table {
       onOpen: () => {
         this.selectColumn(this.hoveredColumn);
         this.hideRowToolbox();
+        this.hideCellToolbox();
       },
       onClose: () => {
         this.unselectColumn();
@@ -276,11 +296,59 @@ export default class Table {
       onOpen: () => {
         this.selectRow(this.hoveredRow);
         this.hideColumnToolbox();
+        this.hideCellToolbox();
       },
       onClose: () => {
         this.unselectRow();
       }
     });
+  }
+
+  /**
+   * Configures and creates the toolbox for cell formatting
+   *
+   * @returns {Toolbox}
+   */
+  createCellToolbox() {
+    const colorItems = this.cellColors.map(color => {
+      return {
+        label: this.api.i18n.t(color.name),
+        icon: `<div style="width: 100%; height: 100%; border-radius: 3px; background-color: ${color.value}; border: 1px solid #ccc;"></div>`,
+        onClick: () => {
+          this.setCellColor(this.selectedCell.row, this.selectedCell.column, color.value);
+          this.hideToolboxes();
+        }
+      };
+    });
+
+    return new Toolbox({
+      api: this.api,
+      cssModifier: 'cell',
+      items: colorItems,
+      onOpen: () => {
+        this.hideColumnToolbox();
+        this.hideRowToolbox();
+      },
+      onClose: () => {
+      }
+    });
+  }
+
+  /**
+   * Set background color for a cell
+   *
+   * @param {number} row - row index
+   * @param {number} column - column index
+   * @param {string} color - color value (hex, rgb, etc.)
+   */
+  setCellColor(row, column, color) {
+    const cell = this.getCell(row, column);
+
+    if (cell) {
+      cell.style.backgroundColor = color;
+      // Store color in dataset for persistence
+      cell.dataset.backgroundColor = color;
+    }
   }
 
   /**
@@ -347,10 +415,17 @@ export default class Table {
    * @param {number} column - cell column coordinate
    * @param {string} content - cell HTML content
    */
-  setCellContent(row, column, content) {
+  setCellContent(row, column, content, styles = {}) {
     const cell = this.getCell(row, column);
 
     cell.innerHTML = content;
+
+    // Apply any styles to the cell
+    if (styles.backgroundColor) {
+      cell.style.backgroundColor = styles.backgroundColor;
+      // Store in dataset for persistence
+      cell.dataset.backgroundColor = styles.backgroundColor;
+    }
   }
 
   /**
@@ -512,6 +587,7 @@ export default class Table {
 
     this.wrapper.appendChild(this.toolboxRow.element);
     this.wrapper.appendChild(this.toolboxColumn.element);
+    this.wrapper.appendChild(this.toolboxCell.element);
     this.wrapper.appendChild(this.table);
 
     if (!this.readOnly) {
@@ -585,7 +661,11 @@ export default class Table {
     if (data && data.content) {
       for (let i = 0; i < data.content.length; i++) {
         for (let j = 0; j < data.content[i].length; j++) {
-          this.setCellContent(i + 1, j + 1, data.content[i][j]);
+          const cellData = data.content[i][j];
+          const content = typeof cellData === 'object' ? cellData.content : cellData;
+          const styles = typeof cellData === 'object' ? { backgroundColor: cellData.backgroundColor } : {};
+
+          this.setCellContent(i + 1, j + 1, content, styles);
         }
       }
     }
@@ -712,7 +792,33 @@ export default class Table {
   }
 
   /**
-   * Unselect row/column
+   * Handle clicks on table cells for selection
+   *
+   * @param {MouseEvent} event - click event
+   */
+  cellClickListener(event) {
+    const cell = event.target.closest(`.${CSS.cell}`);
+    if (!cell) {
+      return;
+    }
+
+    // Clear previous selection
+    this.unselectCell();
+
+    // Get row and column index
+    const row = this.getRowByCell(cell);
+    const rowIndex = Array.from(this.table.querySelectorAll(`.${CSS.row}`)).indexOf(row) + 1;
+    const columnIndex = Array.from(row.querySelectorAll(`.${CSS.cell}`)).indexOf(cell) + 1;
+
+    // Set as selected cell
+    this.selectCell(rowIndex, columnIndex);
+
+    // Update toolbox position
+    this.updateToolboxesPosition();
+  }
+
+  /**
+   * Unselect row/column/cell
    * Close toolbox menu
    * Hide toolboxes
    *
@@ -721,6 +827,7 @@ export default class Table {
   hideToolboxes() {
     this.hideRowToolbox();
     this.hideColumnToolbox();
+    this.hideCellToolbox();
     this.updateToolboxesPosition();
   }
 
@@ -742,6 +849,64 @@ export default class Table {
     this.unselectColumn();
 
     this.toolboxColumn.hide();
+  }
+
+  /**
+   * Unselect cell, close toolbox
+   *
+   * @returns {void}
+   */
+  hideCellToolbox() {
+    this.toolboxCell.hide();
+  }
+
+  /**
+   * Select a cell and show toolbox
+   *
+   * @param {number} rowIndex - row index
+   * @param {number} columnIndex - column index
+   */
+  selectCell(rowIndex, columnIndex) {
+    const cell = this.getCell(rowIndex, columnIndex);
+
+    if (cell) {
+      this.selectedCell = {
+        row: rowIndex,
+        column: columnIndex
+      };
+
+      // Store current background color in dataset if not already stored
+      if (cell.style.backgroundColor && !cell.dataset.backgroundColor) {
+        cell.dataset.backgroundColor = cell.style.backgroundColor;
+      }
+
+      cell.classList.add(CSS.cellActive);
+    }
+  }
+
+  /**
+   * Unselect the currently selected cell
+   */
+  unselectCell() {
+    if (this.selectedCell.row <= 0 || this.selectedCell.column <= 0) {
+      return;
+    }
+
+    const cell = this.getCell(this.selectedCell.row, this.selectedCell.column);
+
+    if (cell) {
+      cell.classList.remove(CSS.cellActive);
+
+      // Ensure background color is preserved from dataset if available
+      if (cell.dataset.backgroundColor) {
+        cell.style.backgroundColor = cell.dataset.backgroundColor;
+      }
+    }
+
+    this.selectedCell = {
+      row: 0,
+      column: 0
+    };
   }
 
   /**
@@ -792,6 +957,23 @@ export default class Table {
             top: `${Math.ceil(fromTopBorder + height / 2)}px`
           };
         });
+      }
+    }
+
+    // Show cell toolbox if we have a selected cell
+    if (this.selectedCell.row > 0 && this.selectedCell.column > 0) {
+      const cell = this.getCell(this.selectedCell.row, this.selectedCell.column);
+      if (cell) {
+        const { fromTopBorder, fromLeftBorder } = $.getRelativeCoordsOfTwoElems(this.table, cell);
+        const { width, height } = cell.getBoundingClientRect();
+
+        this.toolboxCell.show(() => {
+          return {
+            top: `${Math.ceil(fromTopBorder)}px`,
+            left: `${Math.ceil(fromLeftBorder + width)}px`
+          };
+        });
+
       }
     }
   }
@@ -982,7 +1164,7 @@ export default class Table {
   /**
    * Collects data from cells into a two-dimensional array
    *
-   * @returns {string[][]}
+   * @returns {Array}
    */
   getData() {
     const data = [];
@@ -996,7 +1178,19 @@ export default class Table {
         continue;
       }
 
-      data.push(cells.map(cell => cell.innerHTML));
+      data.push(cells.map(cell => {
+        // Check dataset first for stored color, fall back to style
+        const backgroundColor = cell.dataset.backgroundColor || cell.style.backgroundColor;
+        // If the cell has a background color, return an object with the content and background color
+        if (backgroundColor && backgroundColor !== 'transparent') {
+          return {
+            content: cell.innerHTML,
+            backgroundColor: backgroundColor
+          };
+        }
+        // Otherwise, just return the content as a string
+        return cell.innerHTML;
+      }));
     }
 
     return data;
